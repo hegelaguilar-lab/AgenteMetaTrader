@@ -1,23 +1,12 @@
 import os
-import streamlit as st
+from flask import Flask, render_template
 import requests
-import pandas as pd
 
-# ==========================================
-# CONFIGURACIÓN SRE DEL ENTORNO
-# ==========================================
-st.set_page_config(page_title="Nexus C2 Panel", page_icon="🛡️", layout="wide")
+app = Flask(__name__)
 
-# 🛡️ SRE FIX: Extracción compatible con contenedores Docker (Render OS) y Streamlit local
-try:
-    SUPABASE_URL = os.environ.get("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
-    SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
-    
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("Missing Credentials")
-except Exception:
-    st.error("⚠️ [SRE ERROR] Credenciales de Supabase ausentes en las variables de entorno de Render.")
-    st.stop()
+# 🛡️ SRE SEGURIDAD: Extracción de variables desde el entorno de Render (Cero Hardcoding)
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -25,98 +14,60 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-st.title("🛡️ NEXUS CLUSTER - COMMAND & CONTROL")
-st.markdown("---")
+@app.route("/")
+def index():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return "⚠️ [SRE ERROR] Variables de Entorno SUPABASE_URL y SUPABASE_KEY no configuradas en Render.", 500
 
-# ==========================================
-# MÓDULO 1: MATRIZ DE AGENTES Y CAPITAL
-# ==========================================
-st.header("⚙️ Matriz de Ignición y Capital Dinámico")
+    # 1. Extracción de Logística SRE (El Orquestador)
+    ctrl_url = f"{SUPABASE_URL}/rest/v1/nexus_control?order=id.asc"
+    ctrl_res = requests.get(ctrl_url, headers=HEADERS)
+    tasks = ctrl_res.json() if ctrl_res.status_code == 200 else []
 
-@st.cache_data(ttl=5) # Caché con expiración de 5s para evitar DDoS a Supabase
-def fetch_agents():
-    url = f"{SUPABASE_URL}/rest/v1/nexus_control?tipo_tarea=eq.AGENTE_TRADING&order=nombre_tarea.asc"
-    res = requests.get(url, headers=HEADERS)
-    return res.json() if res.status_code == 200 else []
+    # 2. Extracción de Finanzas (El Historial)
+    hist_url = f"{SUPABASE_URL}/rest/v1/trade_history?select=agent_node,profit_usd"
+    hist_res = requests.get(hist_url, headers=HEADERS)
+    history = hist_res.json() if hist_res.status_code == 200 else []
 
-agentes = fetch_agents()
-
-if agentes:
-    # Crear columnas dinámicas según la cantidad de agentes
-    cols = st.columns(len(agentes))
-    for idx, agente in enumerate(agentes):
-        with cols[idx]:
-            st.subheader(agente.get('nombre_tarea', 'UNKNOWN'))
+    # 3. Fusión en Memoria (Agrupación Contable por Nodo)
+    stats = {}
+    if isinstance(history, list):
+        for h in history:
+            node = str(h.get('agent_node', 'UNKNOWN')).upper()
+            profit = float(h.get('profit_usd', 0.0))
             
-            estado = "🟢 ONLINE" if agente.get('esta_activo') else "🔴 OFFLINE"
-            st.markdown(f"**Estado:** {estado}")
-            st.markdown(f"**Ventana (NY):** {agente.get('hora_inicio_ny')} - {agente.get('hora_cierre_ny')}")
+            if node not in stats:
+                stats[node] = {"pnl_total": 0.0, "trades": 0, "wins": 0}
             
-            cap_actual = float(agente.get('capital_asignado', 3000.0))
-            nuevo_cap = st.number_input("Capital Operativo ($)", value=cap_actual, step=500.0, key=f"cap_{agente['id']}")
+            stats[node]["pnl_total"] += profit
+            stats[node]["trades"] += 1
+            if profit > 0:
+                stats[node]["wins"] += 1
+
+    # 4. Inyección Financiera en la Flota
+    agents = []
+    if isinstance(tasks, list):
+        for c in tasks:
+            nombre = str(c.get('nombre_tarea', '')).upper()
+            node_key = "UNKNOWN"
             
-            if st.button("Inyectar Presupuesto", key=f"btn_{agente['id']}"):
-                patch_url = f"{SUPABASE_URL}/rest/v1/nexus_control?id=eq.{agente['id']}"
-                payload = {"capital_asignado": nuevo_cap}
-                headers_patch = HEADERS.copy()
-                headers_patch["Prefer"] = "return=minimal"
-                
-                req = requests.patch(patch_url, headers=headers_patch, json=payload)
-                if req.status_code == 204:
-                    st.success("✅ ADN de Capital inyectado. El Agente ajustará lotes en el próximo tick.")
-                    st.rerun()
-                else:
-                    st.error(f"❌ Fallo API: {req.text}")
-else:
-    st.info("No se encontraron agentes de trading en Supabase.")
+            # Reconocimiento Geográfico
+            if "NY" in nombre: node_key = "NY"
+            elif "ASIA" in nombre: node_key = "ASIA"
+            elif "EUROP" in nombre: node_key = "EUROPE"
+            elif "FOREX" in nombre: node_key = "FOREX"
+            
+            ag_stats = stats.get(node_key, {"pnl_total": 0.0, "trades": 0, "wins": 0})
+            win_rate = (ag_stats["wins"] / ag_stats["trades"] * 100) if ag_stats["trades"] > 0 else 0.0
+            
+            c['pnl_total'] = round(ag_stats["pnl_total"], 2)
+            c['win_rate'] = round(win_rate, 1)
+            c['trades_count'] = ag_stats["trades"]
+            c['capital_asignado'] = float(c.get('capital_asignado') or 3000.0)
+            
+            agents.append(c)
 
-st.markdown("---")
+    return render_template("index.html", agents=agents)
 
-# ==========================================
-# MÓDULO 2: INTELIGENCIA CONTABLE (PNL)
-# ==========================================
-st.header("📊 Inteligencia Contable y Performance")
-
-@st.cache_data(ttl=10) # Refresco cada 10 segundos
-def fetch_trades():
-    url = f"{SUPABASE_URL}/rest/v1/trade_history?order=created_at.desc"
-    res = requests.get(url, headers=HEADERS)
-    return res.json() if res.status_code == 200 else []
-
-trades = fetch_trades()
-
-if trades:
-    df_trades = pd.DataFrame(trades)
-    
-    # Conversión de zona horaria de UTC a Local para mejor lectura
-    df_trades['created_at'] = pd.to_datetime(df_trades['created_at']).dt.tz_convert('America/New_York').dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Matemáticas de Rendimiento
-    total_pnl = df_trades['profit_usd'].sum()
-    total_trades = len(df_trades)
-    ganadoras = len(df_trades[df_trades['profit_usd'] > 0])
-    win_rate = (ganadoras / total_trades) * 100 if total_trades > 0 else 0
-    
-    # Renderizado de KPIs
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Equidad Neta (PnL)", f"${total_pnl:.2f}")
-    c2.metric("Operaciones Históricas", total_trades)
-    c3.metric("Win Rate", f"{win_rate:.1f}%")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Modificar estilos de la tabla
-    df_trades = df_trades.rename(columns={
-        "created_at": "Fecha (NY)", 
-        "agent_node": "Nodo", 
-        "symbol": "Activo", 
-        "profit_usd": "PnL ($)"
-    })
-    
-    st.dataframe(
-        df_trades[["Fecha (NY)", "Nodo", "Activo", "trade_type", "PnL ($)"]], 
-        use_container_width=True,
-        hide_index=True
-    )
-else:
-    st.info("Aún no hay operaciones cerradas registradas en el ecosistema.")
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
