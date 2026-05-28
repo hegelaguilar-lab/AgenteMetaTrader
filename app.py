@@ -4,6 +4,26 @@ import requests
 
 app = Flask(__name__)
 
+# 🛡️ SRE MOTOR DE PAGINACIÓN: Evasión legal de límites de capa gratuita
+def fetch_all_paginated(base_url, headers):
+    all_data = []
+    offset = 0
+    limit = 1000
+    while True:
+        sep = "&" if "?" in base_url else "?"
+        url = f"{base_url}{sep}limit={limit}&offset={offset}"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code != 200: break
+            data = res.json()
+            if not data: break
+            all_data.extend(data)
+            if len(data) < limit: break # Hemos llegado al final de la historia
+            offset += limit
+        except:
+            break
+    return all_data
+
 @app.route("/")
 def index():
     # 🛡️ SRE FEDERACIÓN DE DATOS: Detección dinámica de múltiples bases de datos
@@ -35,47 +55,34 @@ def index():
         
         # 1. Extracción de Logística SRE (Filtro Estricto)
         ctrl_url = f"{db_url}/rest/v1/nexus_control?tipo_tarea=eq.AGENTE_TRADING&order=id.asc"
-        try:
-            ctrl_res = requests.get(ctrl_url, headers=headers, timeout=5)
-            tasks = ctrl_res.json() if ctrl_res.status_code == 200 else []
-        except: tasks = []
+        tasks = fetch_all_paginated(ctrl_url, headers)
 
-        # 2. Extracción de Finanzas Clásicas (MetaTrader) - Límite extendido a 5000
-        hist_url = f"{db_url}/rest/v1/trade_history?select=agent_node,profit_usd&limit=5000"
-        try:
-            hist_res = requests.get(hist_url, headers=headers, timeout=5)
-            history = hist_res.json() if hist_res.status_code == 200 else []
-        except: history = []
+        # 2. Extracción de Finanzas Clásicas (MetaTrader)
+        hist_url = f"{db_url}/rest/v1/trade_history?select=agent_node,profit_usd"
+        history = fetch_all_paginated(hist_url, headers)
 
         # 🛡️ ADAPTADOR ETL SRE 1: Tabla Trinidad (Agentes 1, 2 y 3)
-        trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt&limit=5000"
-        try:
-            trin_res = requests.get(trin_url, headers=headers, timeout=5)
-            trin_data = trin_res.json() if trin_res.status_code == 200 else []
-            for d in trin_data:
-                val_pnl = d.get("pnl_usdt")
-                history.append({
-                    "agent_node": d.get("agente", "UNKNOWN"),
-                    "profit_usd": float(val_pnl) if val_pnl is not None else 0.0
-                })
-        except: pass
+        trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt"
+        trin_data = fetch_all_paginated(trin_url, headers)
+        for d in trin_data:
+            val_pnl = d.get("pnl_usdt")
+            history.append({
+                "agent_node": d.get("agente", "UNKNOWN"),
+                "profit_usd": float(val_pnl) if val_pnl is not None else 0.0
+            })
 
         # 🛡️ ADAPTADOR ETL SRE 2: Tabla Radar (Agente ScanPump)
-        radar_url = f"{db_url}/rest/v1/nexus_radar_history?select=price_delta,cluster&limit=5000"
-        try:
-            radar_res = requests.get(radar_url, headers=headers, timeout=5)
-            radar_data = radar_res.json() if radar_res.status_code == 200 else []
-            for r in radar_data:
-                # Filtro SRE: Destruir operaciones fantasma de simuladores
-                if str(r.get("cluster", "")) == "Backtest_Discovery":
-                    continue
-                
-                val_delta = r.get("price_delta")
-                history.append({
-                    "agent_node": "SCANPUMP", # 🛡️ Identidad Inyectada a la fuerza
-                    "profit_usd": float(val_delta) if val_delta is not None else 0.0
-                })
-        except: pass
+        radar_url = f"{db_url}/rest/v1/nexus_radar_history?select=price_delta,cluster"
+        radar_data = fetch_all_paginated(radar_url, headers)
+        for r in radar_data:
+            if str(r.get("cluster", "")) == "Backtest_Discovery":
+                continue
+            
+            val_delta = r.get("price_delta")
+            history.append({
+                "agent_node": "SCANPUMP", 
+                "profit_usd": float(val_delta) if val_delta is not None else 0.0
+            })
 
         # 3. Fusión en Memoria
         stats = {}
