@@ -47,17 +47,31 @@ def index():
             history = hist_res.json() if hist_res.status_code == 200 else []
         except: history = []
 
-        # 🛡️ ADAPTADOR ETL SRE: Extracción y Traducción de la Tabla Trinidad (Agentes 1, 2 y 3)
+        # 🛡️ ADAPTADOR ETL SRE 1: Tabla Trinidad (Agentes 1, 2 y 3)
         trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt"
         try:
             trin_res = requests.get(trin_url, headers=headers, timeout=5)
             trin_data = trin_res.json() if trin_res.status_code == 200 else []
-            
-            # Traducimos las columnas cripto al estándar institucional de la flota
             for d in trin_data:
                 history.append({
                     "agent_node": d.get("agente", "UNKNOWN"),
                     "profit_usd": d.get("pnl_usdt", 0.0)
+                })
+        except: pass
+
+        # 🛡️ ADAPTADOR ETL SRE 2: Tabla Radar (Agente ScanPump)
+        radar_url = f"{db_url}/rest/v1/nexus_radar_history?select=price_delta,cluster"
+        try:
+            radar_res = requests.get(radar_url, headers=headers, timeout=5)
+            radar_data = radar_res.json() if radar_res.status_code == 200 else []
+            for r in radar_data:
+                # Filtro SRE: Destruir operaciones fantasma de simuladores
+                if str(r.get("cluster", "")) == "Backtest_Discovery":
+                    continue
+                
+                history.append({
+                    "agent_node": "SCANPUMP", # 🛡️ Identidad Inyectada a la fuerza
+                    "profit_usd": float(r.get("price_delta", 0.0))
                 })
         except: pass
 
