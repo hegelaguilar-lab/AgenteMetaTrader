@@ -40,27 +40,28 @@ def index():
             tasks = ctrl_res.json() if ctrl_res.status_code == 200 else []
         except: tasks = []
 
-        # 2. Extracción de Finanzas Clásicas (MetaTrader)
-        hist_url = f"{db_url}/rest/v1/trade_history?select=agent_node,profit_usd"
+        # 2. Extracción de Finanzas Clásicas (MetaTrader) - Límite extendido a 5000
+        hist_url = f"{db_url}/rest/v1/trade_history?select=agent_node,profit_usd&limit=5000"
         try:
             hist_res = requests.get(hist_url, headers=headers, timeout=5)
             history = hist_res.json() if hist_res.status_code == 200 else []
         except: history = []
 
         # 🛡️ ADAPTADOR ETL SRE 1: Tabla Trinidad (Agentes 1, 2 y 3)
-        trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt"
+        trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt&limit=5000"
         try:
             trin_res = requests.get(trin_url, headers=headers, timeout=5)
             trin_data = trin_res.json() if trin_res.status_code == 200 else []
             for d in trin_data:
+                val_pnl = d.get("pnl_usdt")
                 history.append({
                     "agent_node": d.get("agente", "UNKNOWN"),
-                    "profit_usd": d.get("pnl_usdt", 0.0)
+                    "profit_usd": float(val_pnl) if val_pnl is not None else 0.0
                 })
         except: pass
 
         # 🛡️ ADAPTADOR ETL SRE 2: Tabla Radar (Agente ScanPump)
-        radar_url = f"{db_url}/rest/v1/nexus_radar_history?select=price_delta,cluster"
+        radar_url = f"{db_url}/rest/v1/nexus_radar_history?select=price_delta,cluster&limit=5000"
         try:
             radar_res = requests.get(radar_url, headers=headers, timeout=5)
             radar_data = radar_res.json() if radar_res.status_code == 200 else []
@@ -69,9 +70,10 @@ def index():
                 if str(r.get("cluster", "")) == "Backtest_Discovery":
                     continue
                 
+                val_delta = r.get("price_delta")
                 history.append({
                     "agent_node": "SCANPUMP", # 🛡️ Identidad Inyectada a la fuerza
-                    "profit_usd": float(r.get("price_delta", 0.0))
+                    "profit_usd": float(val_delta) if val_delta is not None else 0.0
                 })
         except: pass
 
@@ -80,7 +82,8 @@ def index():
         if isinstance(history, list):
             for h in history:
                 node = str(h.get('agent_node', 'UNKNOWN')).upper()
-                profit = float(h.get('profit_usd', 0.0))
+                val_profit = h.get('profit_usd')
+                profit = float(val_profit) if val_profit is not None else 0.0
                 
                 if node not in stats:
                     stats[node] = {"pnl_total": 0.0, "trades": 0, "wins": 0}
