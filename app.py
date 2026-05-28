@@ -19,8 +19,8 @@ def index():
     if not SUPABASE_URL or not SUPABASE_KEY:
         return "⚠️ [SRE ERROR] Variables de Entorno SUPABASE_URL y SUPABASE_KEY no configuradas en Render.", 500
 
-    # 1. Extracción de Logística SRE (El Orquestador)
-    ctrl_url = f"{SUPABASE_URL}/rest/v1/nexus_control?order=id.asc"
+    # 1. Extracción de Logística SRE (Filtro Estricto: Solo Músculo Operativo)
+    ctrl_url = f"{SUPABASE_URL}/rest/v1/nexus_control?tipo_tarea=eq.AGENTE_TRADING&order=id.asc"
     ctrl_res = requests.get(ctrl_url, headers=HEADERS)
     tasks = ctrl_res.json() if ctrl_res.status_code == 200 else []
 
