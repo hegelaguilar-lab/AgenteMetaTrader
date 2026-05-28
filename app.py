@@ -40,12 +40,26 @@ def index():
             tasks = ctrl_res.json() if ctrl_res.status_code == 200 else []
         except: tasks = []
 
-        # 2. Extracción de Finanzas (El Historial)
+        # 2. Extracción de Finanzas Clásicas (MetaTrader)
         hist_url = f"{db_url}/rest/v1/trade_history?select=agent_node,profit_usd"
         try:
             hist_res = requests.get(hist_url, headers=headers, timeout=5)
             history = hist_res.json() if hist_res.status_code == 200 else []
         except: history = []
+
+        # 🛡️ ADAPTADOR ETL SRE: Extracción y Traducción de la Tabla Trinidad (Agentes 1, 2 y 3)
+        trin_url = f"{db_url}/rest/v1/trinidad_dashboard?select=agente,pnl_usdt"
+        try:
+            trin_res = requests.get(trin_url, headers=headers, timeout=5)
+            trin_data = trin_res.json() if trin_res.status_code == 200 else []
+            
+            # Traducimos las columnas cripto al estándar institucional de la flota
+            for d in trin_data:
+                history.append({
+                    "agent_node": d.get("agente", "UNKNOWN"),
+                    "profit_usd": d.get("pnl_usdt", 0.0)
+                })
+        except: pass
 
         # 3. Fusión en Memoria
         stats = {}
@@ -66,18 +80,23 @@ def index():
         if isinstance(tasks, list):
             for c in tasks:
                 nombre = str(c.get('nombre_tarea', '')).upper()
+                ag_stats = {"pnl_total": 0.0, "trades": 0, "wins": 0}
                 
-                # 🛡️ CERO HARDCODING GEOGRÁFICO: Detección dinámica de identidad
-                # Ejemplo: Si el bot se llama "Agente Alpaca", node_key será "ALPACA"
-                node_key = nombre.split()[-1] if " " in nombre else nombre
+                # 🛡️ ALGORITMO DE FUSIÓN SRE (Fuzzy Matching Alfanumérico)
+                clean_nombre = ''.join(e for e in nombre if e.isalnum())
                 
-                # Retrocompatibilidad SRE para los 4 Biomas Clásicos de MT5
-                if "NY" in nombre: node_key = "NY"
-                elif "ASIA" in nombre: node_key = "ASIA"
-                elif "EUROP" in nombre: node_key = "EUROPE"
-                elif "FOREX" in nombre: node_key = "FOREX"
-                
-                ag_stats = stats.get(node_key, {"pnl_total": 0.0, "trades": 0, "wins": 0})
+                for db_node, s in stats.items():
+                    clean_node = ''.join(e for e in db_node if e.isalnum())
+                    
+                    # Coincidencia cruzada tolerante a espacios y guiones bajos
+                    if clean_node in clean_nombre or clean_nombre in clean_node:
+                        ag_stats = s; break
+                    # Retrocompatibilidad SRE Biomas y Abreviaturas
+                    if "NY" in clean_nombre and "NY" in clean_node: ag_stats = s; break
+                    if "ASIA" in clean_nombre and "ASIA" in clean_node: ag_stats = s; break
+                    if "EUROP" in clean_nombre and "EUROP" in clean_node: ag_stats = s; break
+                    if "FOREX" in clean_nombre and "FOREX" in clean_node: ag_stats = s; break
+                    if "MM" in clean_node and "MARKETMAKER" in clean_nombre: ag_stats = s; break
                 win_rate = (ag_stats["wins"] / ag_stats["trades"] * 100) if ag_stats["trades"] > 0 else 0.0
                 
                 c['pnl_total'] = round(ag_stats["pnl_total"], 2)
